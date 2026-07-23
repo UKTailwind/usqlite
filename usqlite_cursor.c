@@ -60,6 +60,38 @@ static void usqlite_cursor_untrack(usqlite_cursor_t *self, mp_obj_t self_in) {
 
 // ------------------------------------------------------------------------------
 
+// Build once and cache the tuple of result-column names, so .keys keeps working
+// after the statement is finalized on exhaustion (see cursor_finish).
+static mp_obj_t cursor_colnames(usqlite_cursor_t *self) {
+    if (self->colnames == MP_OBJ_NULL && self->stmt) {
+        int n = sqlite3_column_count(self->stmt);
+        mp_obj_tuple_t *o = MP_OBJ_TO_PTR(mp_obj_new_tuple(n, NULL));
+        for (int i = 0; i < n; i++)
+        {
+            o->items[i] = usqlite_column_name(self->stmt, i);
+        }
+        self->colnames = MP_OBJ_FROM_PTR(o);
+    }
+    return self->colnames;
+}
+
+// Finalize an exhausted statement and drop the cursor from the connection's
+// list, so a long-lived connection running many SELECTs without closing each
+// cursor does not accumulate open statements in the fixed SQLite heap. rowcount
+// is left untouched and the column names are cached first, so the cursor stays
+// usable for rowcount/lastrowid/.keys afterwards.
+static void cursor_finish(usqlite_cursor_t *self) {
+    if (!self->stmt) {
+        return;
+    }
+    cursor_colnames(self);
+    sqlite3_finalize(self->stmt);
+    self->stmt = NULL;
+    usqlite_cursor_untrack(self, MP_OBJ_FROM_PTR(self));
+}
+
+// ------------------------------------------------------------------------------
+
 static mp_obj_t usqlite_cursor_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     usqlite_row_type_initialize();
 
@@ -137,6 +169,7 @@ mp_obj_t usqlite_cursor_close(mp_obj_t self_in) {
     self->stmt = NULL;
     self->rowcount = -1;
     self->rc = SQLITE_OK;
+    self->colnames = MP_OBJ_NULL;
 
     return mp_const_none;
 }
@@ -146,6 +179,9 @@ MP_DEFINE_CONST_FUN_OBJ_1(usqlite_cursor_close_obj, usqlite_cursor_close);
 // ------------------------------------------------------------------------------
 
 static int stepExecute(usqlite_cursor_t *self) {
+    if (!self->stmt) {
+        return self->rc;
+    }
     self->rc = sqlite3_step(self->stmt);
 
     switch (self->rc)
@@ -158,6 +194,10 @@ static int stepExecute(usqlite_cursor_t *self) {
             break;
 
         case SQLITE_DONE:
+            // Exhausted: free the statement now rather than pinning it in the
+            // connection's cursor list until close. This is what stops a
+            // long-lived connection's SELECTs from piling up in the heap.
+            cursor_finish(self);
             break;
 
         case SQLITE_ERROR:
@@ -324,6 +364,8 @@ static mp_obj_t usqlite_cursor_execute(size_t n_args, const mp_obj_t *args) {
         return mp_const_none;
     }
 
+    self->colnames = MP_OBJ_NULL;   // fresh statement -> rebuild names on demand
+
     // Track it now that a live statement exists, so it is finalized at
     // connection close even if binding/stepping below raises or the caller
     // drops the cursor.
@@ -367,21 +409,13 @@ static mp_obj_t usqlite_cursor_execute(size_t n_args, const mp_obj_t *args) {
             break;
     }
 
-    // A statement that returns no rows (INSERT/UPDATE/DELETE/DDL) has nothing to
-    // fetch, so finalize it now and drop the cursor from the connection's list
-    // instead of holding the compiled program (~2 KB) until the connection
-    // closes -- this is what lets a bulk-insert loop run at flat memory.
-    // rowcount is already captured and lastrowid reads from the connection, so
-    // both survive. SELECT cursors (columns > 0) keep their statement to fetch.
-    if (self->stmt && sqlite3_column_count(self->stmt) == 0) {
-        // Finalize inline rather than via usqlite_cursor_close(), which resets
-        // rowcount to -1 -- the caller must still be able to read rowcount and
-        // lastrowid on the returned cursor.
-        sqlite3_finalize(self->stmt);
-        self->stmt = NULL;
-        usqlite_cursor_untrack(self, self_in);
-    }
-
+    // No explicit finalize needed here: a statement that returns no rows
+    // (INSERT/UPDATE/DELETE/DDL) or an empty SELECT has already stepped to
+    // SQLITE_DONE above, and stepExecute() -> cursor_finish() has finalized it
+    // and dropped the cursor from the connection's list. rowcount (captured in
+    // the switch above) and lastrowid (read from the connection) both survive.
+    // A SELECT that produced rows keeps its statement, to be finalized when the
+    // caller exhausts it, closes it, or closes the connection.
     return self_in;
 }
 

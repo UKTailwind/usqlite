@@ -47,6 +47,7 @@ struct _usqlite_cursor_t
     usqlite_rowfactory_t rowfactory;
     int arraysize;
     bool registered;    // true while listed in connection->cursors (holds a stmt)
+    mp_obj_t colnames;  // cached result-column names, so .keys survives finalize
 };
 
 // ------------------------------------------------------------------------------
