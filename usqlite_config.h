@@ -63,7 +63,10 @@ SOFTWARE.
 #undef SQLITE_ENABLE_RTREE
 
 #define SQLITE_ENABLE_MEMORY_MANAGEMENT 1
-#define SQLITE_DEFAULT_MEMSTATUS 0
+// Track heap usage so usqlite.mem_current()/mem_peak() report real figures --
+// invaluable for watching the dedicated heap fill. Cheap here: THREADSAFE is 0,
+// so it is just an unlocked counter per malloc/free.
+#define SQLITE_DEFAULT_MEMSTATUS 1
 #define SQLITE_ZERO_MALLOC 1
 
 
