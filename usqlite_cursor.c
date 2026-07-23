@@ -182,18 +182,21 @@ static int bindParameter(sqlite3_stmt *stmt, int index, mp_obj_t value) {
         return sqlite3_bind_int(stmt, index, mp_obj_get_int(value));
     } else if (mp_obj_is_str(value)) {
         GET_STR_DATA_LEN(value, str, nstr);
-        return sqlite3_bind_text(stmt, index, (const char *)str, nstr, NULL);
+        // SQLITE_TRANSIENT: SQLite copies the bytes now. SQLITE_STATIC (a NULL
+        // destructor) would keep this raw pointer into Python's string data,
+        // which the GC may free or the statement may outlive -- use-after-free.
+        return sqlite3_bind_text(stmt, index, (const char *)str, nstr, SQLITE_TRANSIENT);
     } else if (mp_obj_is_float(value)) {
         return sqlite3_bind_double(stmt, index, mp_obj_get_float(value));
     } else if (mp_obj_is_type(value, &mp_type_bytes)) {
         GET_STR_DATA_LEN(value, bytes, nbytes);
-        return sqlite3_bind_blob(stmt, index, bytes, nbytes, NULL);
+        return sqlite3_bind_blob(stmt, index, bytes, nbytes, SQLITE_TRANSIENT);
     }
     #if MICROPY_PY_BUILTINS_BYTEARRAY
     if (mp_obj_is_type(value, &mp_type_bytearray)) {
         mp_buffer_info_t buffer;
         if (mp_get_buffer(value, &buffer, MP_BUFFER_READ)) {
-            return sqlite3_bind_blob(stmt, index, buffer.buf, buffer.len, NULL);
+            return sqlite3_bind_blob(stmt, index, buffer.buf, buffer.len, SQLITE_TRANSIENT);
         }
     }
     #endif
