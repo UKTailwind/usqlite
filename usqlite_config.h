@@ -30,6 +30,16 @@ SOFTWARE.
 
 #undef USQLITE_DEBUG
 
+// Directory for SQLite temporary files (sort/merge spill, temp b-trees). The
+// engine asks the VFS for anonymous temp files by passing a NULL name; usqlite
+// gives them a unique name in this directory so large sorts / GROUP BY / index
+// builds spill to disk instead of failing. Overridable at runtime with
+// PRAGMA temp_store_directory. Defaults to the flash root; a heavy sort
+// workload may prefer the SD card (PRAGMA temp_store_directory='/sd').
+#ifndef USQLITE_TEMP_DIR
+#define USQLITE_TEMP_DIR "/"
+#endif
+
 // ------------------------------------------------------------------------------
 // SQLite configuration options - https://sqlite.org/compile.html
 

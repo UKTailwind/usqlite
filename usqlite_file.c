@@ -24,12 +24,15 @@ SOFTWARE.
 
 #include "usqlite.h"
 
+#include <stdio.h>
+
 #include "py/objstr.h"
 #include "py/objmodule.h"
 #include "py/objlist.h"
 #include "py/runtime.h"
 #include "py/stream.h"
 #include "py/builtin.h"
+#include "py/mphal.h"
 
 extern const mp_obj_module_t mp_module_io;
 
@@ -118,8 +121,49 @@ bool usqlite_file_exists(const char *pathname) {
 
 // ------------------------------------------------------------------------------
 
+// True if os.stat(pathname) succeeds -- used by the VFS xAccess to answer
+// SQLite's "is this a writable directory?" probe (temp_store_directory). Guarded
+// by nlr because os.stat raises rather than returning a code when absent.
+bool usqlite_file_accessible(const char *pathname) {
+    if (!pathname) {
+        return false;
+    }
+    nlr_buf_t nlr;
+    bool ok = false;
+    if (nlr_push(&nlr) == 0) {
+        mp_obj_t os = mp_module_get_builtin(MP_QSTR_uos, 0);
+        mp_obj_t stat = usqlite_method(os, MP_QSTR_stat);
+        mp_call_function_1(stat, mp_obj_new_str(pathname, strlen(pathname)));
+        nlr_pop();
+        ok = true;
+    }
+    return ok;
+}
+
+// ------------------------------------------------------------------------------
+
 int usqlite_file_open(MPFILE *file, const char *pathname, int flags) {
     LOGFUNC;
+
+    // SQLite requests anonymous temporary files (sorter/merge spill, temp
+    // b-trees) by passing a NULL name and expecting the VFS to invent one --
+    // dereferencing that NULL previously crashed the board. Give temp files a
+    // unique name in the temp directory so large sorts and index builds spill
+    // to disk instead of faulting. PRAGMA temp_store_directory overrides the
+    // default (USQLITE_TEMP_DIR).
+    char tmpname[128];
+    bool is_temp = (pathname == NULL) ||
+        ((flags & (SQLITE_OPEN_TEMP_DB | SQLITE_OPEN_TEMP_JOURNAL |
+                   SQLITE_OPEN_TRANSIENT_DB | SQLITE_OPEN_SUBJOURNAL)) != 0);
+    if (pathname == NULL) {
+        static uint32_t seq;
+        const char *dir = sqlite3_temp_directory ? sqlite3_temp_directory : USQLITE_TEMP_DIR;
+        size_t dlen = strlen(dir);
+        const char *sep = (dlen && dir[dlen - 1] == '/') ? "" : "/";
+        snprintf(tmpname, sizeof(tmpname), "%s%setilqs_%08x%08x",
+            dir, sep, (unsigned)mp_hal_ticks_ms(), (unsigned)seq++);
+        pathname = tmpname;
+    }
 
     mp_obj_t filename = mp_obj_new_str(pathname, strlen(pathname));
 
@@ -128,7 +172,9 @@ int usqlite_file_open(MPFILE *file, const char *pathname, int flags) {
     char *pMode = mode;
 
     if (flags & SQLITE_OPEN_CREATE) {
-        if (!usqlite_file_exists(pathname)) {
+        // A temp file has a fresh unique name (and root-level paths confuse the
+        // existence probe), so skip the check and always create-new.
+        if (is_temp || !usqlite_file_exists(pathname)) {
             *pMode++ = 'w';
         }
 
