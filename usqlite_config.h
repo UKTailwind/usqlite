@@ -91,10 +91,17 @@ SOFTWARE.
 #ifndef MEMSYS5_HEAP_SIZE
 #define MEMSYS5_HEAP_SIZE               (128 * 1024)
 #endif
-// Page cache defaults to half the pool (negative = KiB) so it always fits
-// inside it and scales with MEMSYS5_HEAP_SIZE; override to tune.
+// Page cache: small and mostly independent of the pool size (negative = KiB).
+// A big cache (the old half-the-pool default) let the sorter hoard memory
+// before spilling, so a large ORDER BY / GROUP BY / index build climbed to the
+// edge of the pool and thrashed. Capping the cache low makes the sorter's temp
+// b-tree spill to disk early, so big sorts stay bounded (sub-MB) and the pool
+// keeps headroom -- measured at no speed cost (spilling to flash is cheap, and
+// even on SD the same query went from a 150s+ thrash to a clean 20s). ~256 KB
+// where the pool allows, never more than 1/8 of a small pool. Override to tune.
 #ifndef SQLITE_DEFAULT_CACHE_SIZE
-#define SQLITE_DEFAULT_CACHE_SIZE       (-(MEMSYS5_HEAP_SIZE / 2048))
+#define SQLITE_DEFAULT_CACHE_SIZE \
+    (MEMSYS5_HEAP_SIZE / 8 < 256 * 1024 ? -(MEMSYS5_HEAP_SIZE / 8 / 1024) : -256)
 #endif
 #endif
 
