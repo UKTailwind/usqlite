@@ -458,6 +458,13 @@ static mp_obj_t row_type(usqlite_cursor_t *cursor) {
 
     mp_obj_tuple_t *o = MP_OBJ_TO_PTR(mp_obj_new_tuple(columns + 1, NULL));
 
+    // A Row is the column values plus one extra, hidden slot holding the cursor
+    // (usqlite_row_attr reads it at items[len] to build .keys()). Stamp the Row
+    // type so .keys resolves, and set len to the column count so the cursor slot
+    // stays hidden from indexing, iteration, len and printing. (The block is
+    // still columns+1 wide, so the GC keeps the cursor referenced.)
+    o->base.type = (const mp_obj_type_t *)&usqlite_row_type;
+    o->len = columns;
     o->items[columns] = MP_OBJ_FROM_PTR(cursor);
 
     for (int i = 0; i < columns; i++)

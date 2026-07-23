@@ -61,7 +61,10 @@ void usqlite_row_type_initialize() {
 // ------------------------------------------------------------------------------
 
 static mp_obj_t keys(usqlite_cursor_t *cursor) {
-    int columns = sqlite3_data_count(cursor->stmt);
+    // sqlite3_column_count (result column count, stable after prepare), not
+    // sqlite3_data_count (current-row count, 0 once the fetch has stepped past
+    // the row) -- .keys is typically read after the row has been fetched.
+    int columns = sqlite3_column_count(cursor->stmt);
 
     mp_obj_tuple_t *o = MP_OBJ_TO_PTR(mp_obj_new_tuple(columns, NULL));
 
