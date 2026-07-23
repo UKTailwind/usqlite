@@ -40,6 +40,26 @@ static mp_obj_t row_type(usqlite_cursor_t *cursor);
 
 // ------------------------------------------------------------------------------
 
+// A cursor is tracked in the connection's cursor list only while it holds a
+// live prepared statement, so the list is exactly the set of statements that
+// must be finalized at connection close -- and nothing accumulates there across
+// a loop of result-less execute()s. Both calls are idempotent.
+static void usqlite_cursor_track(usqlite_cursor_t *self, mp_obj_t self_in) {
+    if (!self->registered) {
+        usqlite_connection_register(self->connection, self_in);
+        self->registered = true;
+    }
+}
+
+static void usqlite_cursor_untrack(usqlite_cursor_t *self, mp_obj_t self_in) {
+    if (self->registered) {
+        usqlite_connection_deregister(self->connection, self_in);
+        self->registered = false;
+    }
+}
+
+// ------------------------------------------------------------------------------
+
 static mp_obj_t usqlite_cursor_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     usqlite_row_type_initialize();
 
@@ -52,7 +72,9 @@ static mp_obj_t usqlite_cursor_make_new(const mp_obj_type_t *type, size_t n_args
     self->connection = (usqlite_connection_t *)MP_OBJ_TO_PTR(args[0]);
     self->arraysize = 1;
 
-    usqlite_connection_register(self->connection, self_obj);
+    // Not registered here: registration happens when execute() acquires a live
+    // statement (usqlite_cursor_track), so result-less statements never linger
+    // in the connection's cursor list.
 
     switch (self->connection->row_type)
     {
@@ -299,6 +321,11 @@ static mp_obj_t usqlite_cursor_execute(size_t n_args, const mp_obj_t *args) {
         return mp_const_none;
     }
 
+    // Track it now that a live statement exists, so it is finalized at
+    // connection close even if binding/stepping below raises or the caller
+    // drops the cursor.
+    usqlite_cursor_track(self, self_in);
+
     int nParams = sqlite3_bind_parameter_count(self->stmt);
     if (nParams > 0) {
         if (n_args >= 3) {
@@ -337,6 +364,21 @@ static mp_obj_t usqlite_cursor_execute(size_t n_args, const mp_obj_t *args) {
             break;
     }
 
+    // A statement that returns no rows (INSERT/UPDATE/DELETE/DDL) has nothing to
+    // fetch, so finalize it now and drop the cursor from the connection's list
+    // instead of holding the compiled program (~2 KB) until the connection
+    // closes -- this is what lets a bulk-insert loop run at flat memory.
+    // rowcount is already captured and lastrowid reads from the connection, so
+    // both survive. SELECT cursors (columns > 0) keep their statement to fetch.
+    if (self->stmt && sqlite3_column_count(self->stmt) == 0) {
+        // Finalize inline rather than via usqlite_cursor_close(), which resets
+        // rowcount to -1 -- the caller must still be able to read rowcount and
+        // lastrowid on the returned cursor.
+        sqlite3_finalize(self->stmt);
+        self->stmt = NULL;
+        usqlite_cursor_untrack(self, self_in);
+    }
+
     return self_in;
 }
 
@@ -372,15 +414,11 @@ static MP_DEFINE_CONST_FUN_OBJ_2(usqlite_cursor_executemany_obj, usqlite_cursor_
 // ------------------------------------------------------------------------------
 
 static mp_obj_t usqlite_cursor_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *iter_buf) {
-    usqlite_cursor_t *self = MP_OBJ_TO_PTR(self_in);
     (void)iter_buf;
 
-    if (!self->stmt) {
-        mp_raise_msg(&usqlite_Error, MP_ERROR_TEXT("No iter data"));
-        return mp_const_none;
-    }
-
-    return self;
+    // A finalized or result-less cursor iterates as empty (iternext stops as
+    // soon as rc != SQLITE_ROW), so there is no "no iter data" error here.
+    return self_in;
 }
 
 // ------------------------------------------------------------------------------
@@ -585,7 +623,9 @@ static void usqlite_cursor_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
                 break;
 
             case MP_QSTR_description:
-                dest[0] = usqlite_cursor_description(self->stmt);
+                dest[0] = self->stmt
+                    ? usqlite_cursor_description(self->stmt)
+                    : mp_const_none;
                 break;
 
             case MP_QSTR_lastrowid: {
@@ -622,7 +662,7 @@ static mp_obj_t usqlite_cursor_del(mp_obj_t self_in) {
     usqlite_logprintf(___FUNC___ "\n");
 
     usqlite_cursor_close(self_in);
-    usqlite_connection_deregister(self->connection, self_in);
+    usqlite_cursor_untrack(self, self_in);
 
     return mp_const_none;
 }

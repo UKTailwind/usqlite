@@ -46,6 +46,7 @@ struct _usqlite_cursor_t
     int rowcount;
     usqlite_rowfactory_t rowfactory;
     int arraysize;
+    bool registered;    // true while listed in connection->cursors (holds a stmt)
 };
 
 // ------------------------------------------------------------------------------
