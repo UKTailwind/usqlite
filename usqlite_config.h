@@ -64,7 +64,10 @@ SOFTWARE.
 #define SQLITE_OMIT_SHARED_CACHE 1
 #define SQLITE_OMIT_TCL_VARIABLE 1
 #define SQLITE_OMIT_UTF16 1
-// #define SQLITE_OMIT_WAL 1
+// WAL needs the xShm* shared-memory VFS methods, which this VFS does not
+// provide (they are NULL) -- PRAGMA journal_mode=WAL would call through a
+// NULL pointer. Rollback journals are the crash-safety mechanism here.
+#define SQLITE_OMIT_WAL 1
 
 #define SQLITE_UNTESTABLE 1
 
