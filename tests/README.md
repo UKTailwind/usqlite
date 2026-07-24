@@ -16,7 +16,3 @@ All scripts print `... PASSED` on success and use `/tmp` for their databases.
 | `test_fix456.py`  | 64-bit INTEGER bind/read roundtrip, `.description` with computed columns (NULL decltype) and before first fetch, VFS errors surfacing as `usqlite_Error` (not exceptions unwinding SQLite), raising trace callback swallowed |
 | `test_crash.py`   | power-fail recovery: snapshots of db+journal taken mid-transaction and post-commit are reopened; mid-transaction must roll back exactly, post-commit must keep data, a garbage journal must be ignored (`PRAGMA integrity_check` throughout) |
 | `test_churn.py`   | heavy fetchall + gc.collect churn under an open connection, then close (the historical GC-vs-SQLite corruption pattern) |
-
-On-device (Pico Computer 3) counterparts live in
-`ports/rp2/boards/PICO_COMPUTER_3/tests/` (`sqltest_*.py`), including the
-physical power-pull writer/checker pair.
