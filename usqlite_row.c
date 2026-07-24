@@ -98,7 +98,9 @@ static void usqlite_row_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
         switch (attr)
         {
             case MP_QSTR_keys:
-                dest[0] = keys(self->items[self->len]);
+                // The hidden slot holds the cursor object; convert properly
+                // rather than relying on object representation A.
+                dest[0] = keys((usqlite_cursor_t *)MP_OBJ_TO_PTR(self->items[self->len]));
                 break;
         }
     }
