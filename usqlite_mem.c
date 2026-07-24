@@ -37,8 +37,9 @@ SOFTWARE.
 // MicroPython GC this is a single block: it never sees, and so never frees,
 // SQLite's internal allocations -- which is what makes gc.collect() (explicit
 // or automatic) safe while a connection is open. Held in a GC root so the
-// collector keeps the block for the session; a soft reset clears the root and
-// hands the RAM back.
+// collector keeps the block for the session; on soft reset the module __init__
+// clears the root (root pointers are NOT auto-zeroed) and the swept heap hands
+// the RAM back.
 MP_REGISTER_ROOT_POINTER(void *usqlite_heap);
 
 // ------------------------------------------------------------------------------
