@@ -32,12 +32,16 @@ SOFTWARE.
 
 // Directory for SQLite temporary files (sort/merge spill, temp b-trees). The
 // engine asks the VFS for anonymous temp files by passing a NULL name; usqlite
-// gives them a unique name in this directory so large sorts / GROUP BY / index
-// builds spill to disk instead of failing. Overridable at runtime with
-// PRAGMA temp_store_directory. Defaults to the flash root; a heavy sort
-// workload may prefer the SD card (PRAGMA temp_store_directory='/sd').
+// gives them a unique name so large sorts / GROUP BY / index builds spill to
+// disk instead of failing. By default it uses the SD card (USQLITE_TEMP_SD)
+// when one is mounted -- sparing flash from the write churn of a big spill --
+// and falls back to the flash root (USQLITE_TEMP_DIR) otherwise. Either is
+// overridden at runtime by PRAGMA temp_store_directory.
 #ifndef USQLITE_TEMP_DIR
 #define USQLITE_TEMP_DIR "/"
+#endif
+#ifndef USQLITE_TEMP_SD
+#define USQLITE_TEMP_SD "/sd"
 #endif
 
 // ------------------------------------------------------------------------------

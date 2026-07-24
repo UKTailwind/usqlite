@@ -157,7 +157,12 @@ int usqlite_file_open(MPFILE *file, const char *pathname, int flags) {
                    SQLITE_OPEN_TRANSIENT_DB | SQLITE_OPEN_SUBJOURNAL)) != 0);
     if (pathname == NULL) {
         static uint32_t seq;
-        const char *dir = sqlite3_temp_directory ? sqlite3_temp_directory : USQLITE_TEMP_DIR;
+        // Prefer the SD card when it is mounted (spares flash the spill churn),
+        // fall back to flash; PRAGMA temp_store_directory overrides both.
+        const char *dir =
+            sqlite3_temp_directory ? sqlite3_temp_directory :
+            usqlite_file_accessible(USQLITE_TEMP_SD) ? USQLITE_TEMP_SD :
+            USQLITE_TEMP_DIR;
         size_t dlen = strlen(dir);
         const char *sep = (dlen && dir[dlen - 1] == '/') ? "" : "/";
         snprintf(tmpname, sizeof(tmpname), "%s%setilqs_%08x%08x",
